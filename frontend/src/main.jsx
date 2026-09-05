@@ -8,11 +8,26 @@ import {
   Radio, Languages, RefreshCw, CheckCircle2, TrendingUp, 
   TrendingDown, Minus, AlertTriangle, Bell, Thermometer,
   Droplets, Wind, CloudRain, Map, Activity, Calendar,
-  Eye, Gauge, Compass, Cloud, Sun, Moon, Search
+  Eye, Gauge, Compass, Cloud, Sun, Moon, Search, Zap, Award, Clock
 } from "lucide-react";
 import { RiskHeatmap } from './components/RiskHeatmap';
 import { InteractiveMap } from './components/InteractiveMap';
 import { WeatherCharts } from './components/WeatherCharts';
+import { WeatherTimeline } from './components/WeatherTimeline';
+import { WeatherAnalytics as WeatherAnalyticsComponent } from './components/WeatherAnalytics';
+import { WeatherPoints } from './components/WeatherPoints';
+import { CropRecommendation } from './components/CropRecommendation';
+
+// ===== ADVANCED FEATURES =====
+import { FloodRiskMap } from './components/FloodRiskMap';
+import { LightningTracker } from './components/LightningTracker';
+import { WeatherComparison } from './components/WeatherComparison';
+import { ReliabilityScore } from './components/ReliabilityScore';
+import { IMDData } from './components/IMDData';
+import { EmergencyBroadcast } from './components/EmergencyBroadcast';
+import { DisasterResponse } from './components/DisasterResponse';
+import { WeatherAnalytics } from './components/WeatherAnalytics';
+
 import "./styles.css";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -184,6 +199,14 @@ function App(){
   const [cropYield, setCropYield] = useState(null);
   const [selectedCrop, setSelectedCrop] = useState('wheat');
   
+  const [lightningRisk, setLightningRisk] = useState(null);
+  const [disasterRisk, setDisasterRisk] = useState(null);
+  const [showDisasterAlert, setShowDisasterAlert] = useState(false);
+  
+  // Chat History
+  const [chatHistory, setChatHistory] = useState([]);
+  const [currentAnswer, setCurrentAnswer] = useState(null);
+  
   const current = weather?.current || {};
   const derived = weather?.derived || {};
   
@@ -194,7 +217,6 @@ function App(){
 
   const metric = (key, unit="") => current[key] == null ? "—" : `${Math.round(current[key]*10)/10}${unit}`;
 
-  // WebSocket connection
   useEffect(() => {
     const clientId = `client_${Date.now()}`;
     const ws = new WebSocket(`${API.replace('http', 'ws')}/ws/${clientId}`);
@@ -233,7 +255,37 @@ function App(){
     }
   }, [location]);
 
-  // Load weather
+  async function checkLightningRisk(lat, lon) {
+    try {
+      const r = await fetch(`${API}/api/lightning?latitude=${lat}&longitude=${lon}&radius=50`);
+      if (r.ok) {
+        const data = await r.json();
+        setLightningRisk(data);
+        if (data.warning) {
+          setNotice(`⚡ Lightning Risk: ${data.message}`);
+        }
+      }
+    } catch (e) {
+      console.error('Lightning check failed:', e);
+    }
+  }
+
+  async function checkDisasterRisk(lat, lon) {
+    try {
+      const r = await fetch(`${API}/api/disaster/assess?latitude=${lat}&longitude=${lon}`);
+      if (r.ok) {
+        const data = await r.json();
+        setDisasterRisk(data);
+        if (data.evacuation_required) {
+          setShowDisasterAlert(true);
+          setNotice(`🚨 DISASTER ALERT: ${data.highest_risk.type.toUpperCase()} risk detected!`);
+        }
+      }
+    } catch (e) {
+      console.error('Disaster check failed:', e);
+    }
+  }
+
   async function loadWeather(loc=location){
     setLoading(true); 
     setNotice("");
@@ -244,9 +296,10 @@ function App(){
       setWeather(data);
       setNotice(`✅ Weather updated: ${data.current.temperature_2m}°C`);
       
-      // Auto-check disease and crop yield with GET requests (fixed!)
       await checkDiseaseRisk(loc.latitude, loc.longitude);
       await checkCropYield(loc.latitude, loc.longitude);
+      await checkLightningRisk(loc.latitude, loc.longitude);
+      await checkDisasterRisk(loc.latitude, loc.longitude);
       
     } catch(e){
       console.error("Weather load error:", e);
@@ -260,39 +313,30 @@ function App(){
     loadWeather(location);
   }, [location.latitude, location.longitude]);
 
-  // Check disease risk - UPDATED to GET
   async function checkDiseaseRisk(lat, lon) {
     try {
       const r = await fetch(`${API}/api/crop/disease?latitude=${lat}&longitude=${lon}`);
       if (r.ok) {
         const data = await r.json();
         setDiseaseRisk(data);
-        console.log("✅ Disease risk data:", data);
-      } else {
-        console.warn("Disease risk endpoint returned:", r.status);
       }
     } catch (e) {
       console.error('Disease check failed:', e);
     }
   }
 
-  // Check crop yield - UPDATED to GET
   async function checkCropYield(lat, lon) {
     try {
       const r = await fetch(`${API}/api/crop/yield?crop=${selectedCrop}&latitude=${lat}&longitude=${lon}&soil_quality=medium`);
       if (r.ok) {
         const data = await r.json();
         setCropYield(data);
-        console.log("✅ Crop yield data:", data);
-      } else {
-        console.warn("Crop yield endpoint returned:", r.status);
       }
     } catch (e) {
       console.error('Crop yield check failed:', e);
     }
   }
 
-  // Search city
   async function searchCity(){
     if(city.trim().length < 2) return;
     try {
@@ -304,10 +348,9 @@ function App(){
     }
   }
 
-  // Ask question
   async function ask(){
     setLoading(true); 
-    setAnswer(null);
+    setCurrentAnswer(null);
     setNotice("");
     
     try{
@@ -328,8 +371,28 @@ function App(){
       }
       
       const data = await r.json();
-      setAnswer(data);
+      
+      const newChatEntry = {
+        id: Date.now(),
+        question: question,
+        answer: data.answer,
+        risk: data.risk,
+        actions: data.actions || [],
+        evidence: data.evidence || [],
+        confidence: data.confidence || "High",
+        timestamp: new Date().toLocaleTimeString(),
+        riskClass: data.risk?.toLowerCase() || "low"
+      };
+      
+      setChatHistory(prev => [...prev, newChatEntry]);
+      setCurrentAnswer(data);
+      setQuestion("");
+      
       setNotice(`✅ Advisory generated - Risk: ${data.risk}`);
+      
+      if (window.awardWeatherPoints) {
+        window.awardWeatherPoints();
+      }
       
     } catch(e){
       console.error("Chat error:", e);
@@ -339,11 +402,16 @@ function App(){
     }
   }
 
-  // Speak function
-  function speak(){
-    if(!answer || !("speechSynthesis" in window)) return;
+  function clearChatHistory() {
+    setChatHistory([]);
+    setCurrentAnswer(null);
+    setNotice("🗑️ Chat history cleared");
+  }
+
+  function speakText(text) {
+    if(!text || !("speechSynthesis" in window)) return;
     setIsSpeaking(true);
-    const u = new SpeechSynthesisUtterance(answer.answer);
+    const u = new SpeechSynthesisUtterance(text);
     u.lang = language;
     u.onend = () => setIsSpeaking(false);
     u.onerror = () => setIsSpeaking(false);
@@ -351,7 +419,6 @@ function App(){
     window.speechSynthesis.speak(u);
   }
 
-  // Voice input
   function voiceInput(){
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if(!SR){
@@ -364,7 +431,7 @@ function App(){
     rec.start();
   }
 
-  const riskClass = answer?.risk?.toLowerCase() || "low";
+  const riskClass = currentAnswer?.risk?.toLowerCase() || "low";
   const trendIcon = derived?.trend === "rising" ? <TrendingUp size={14} className="trend-up"/> :
                     derived?.trend === "falling" ? <TrendingDown size={14} className="trend-down"/> :
                     <Minus size={14} className="trend-stable"/>;
@@ -403,6 +470,12 @@ function App(){
           </div>
         </div>
         <div className="top-actions-3d">
+          {lightningRisk && lightningRisk.warning && (
+            <div className="lightning-warning-header">
+              <Zap size={14} color="#ff6b6b" />
+              <span>⚡ {lightningRisk.risk_level}</span>
+            </div>
+          )}
           <span className="live-3d">
             <span className="dot-pulse" /> {connected ? 'LIVE' : 'RECONNECTING'}
           </span>
@@ -435,7 +508,7 @@ function App(){
         >
           <WeatherCard3D weather={weather} isNight={isNight} />
           
-          {/* Location Search */}
+          {/* SEARCH */}
           <div className="search-3d">
             <input 
               value={city} 
@@ -466,7 +539,6 @@ function App(){
             <span className="location-coords-3d">{location.latitude.toFixed(2)}, {location.longitude.toFixed(2)}</span>
           </div>
 
-          {/* Metrics Grid */}
           <div className="metrics-grid-3d">
             {[
               { icon: <Thermometer size={14} />, label: 'Temp', value: metric("temperature_2m","°C") },
@@ -504,6 +576,13 @@ function App(){
               </div>
             </div>
           )}
+          
+          {showDisasterAlert && disasterRisk && (
+            <div className="disaster-alert-banner">
+              <AlertTriangle size={16} color="#ff6b6b" />
+              <span>🚨 {disasterRisk.highest_risk.type.toUpperCase()} Risk - {disasterRisk.highest_risk.risk_level}</span>
+            </div>
+          )}
         </motion.aside>
 
         {/* Right Panel */}
@@ -513,7 +592,7 @@ function App(){
           animate={{ x: 0, opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.4 }}
         >
-          {/* Tab Navigation */}
+          {/* ===== TAB NAVIGATION - ALL 12 TABS ===== */}
           <div className="tab-nav-3d">
             <button className={`tab-btn-3d ${activeTab === 'chat' ? 'active' : ''}`} onClick={() => setActiveTab('chat')}>
               <Radio size={14} /> Chat
@@ -527,17 +606,51 @@ function App(){
             <button className={`tab-btn-3d ${activeTab === 'disease' ? 'active' : ''}`} onClick={() => setActiveTab('disease')}>
               <Sprout size={14} /> Disease
             </button>
+            <button className={`tab-btn-3d ${activeTab === 'flood' ? 'active' : ''}`} onClick={() => setActiveTab('flood')}>
+              🌊 Flood
+            </button>
+            <button className={`tab-btn-3d ${activeTab === 'lightning' ? 'active' : ''}`} onClick={() => setActiveTab('lightning')}>
+              ⚡ Lightning
+            </button>
+            <button className={`tab-btn-3d ${activeTab === 'compare' ? 'active' : ''}`} onClick={() => setActiveTab('compare')}>
+              📊 Compare
+            </button>
+            <button className={`tab-btn-3d ${activeTab === 'reliability' ? 'active' : ''}`} onClick={() => setActiveTab('reliability')}>
+              🎯 Trust
+            </button>
+            {/* ===== NEW 4 TABS ===== */}
+            <button className={`tab-btn-3d ${activeTab === 'imd' ? 'active' : ''}`} onClick={() => setActiveTab('imd')}>
+              📡 IMD
+            </button>
+            <button className={`tab-btn-3d ${activeTab === 'emergency' ? 'active' : ''}`} onClick={() => setActiveTab('emergency')}>
+              🆘 Emergency
+            </button>
+            <button className={`tab-btn-3d ${activeTab === 'disaster' ? 'active' : ''}`} onClick={() => setActiveTab('disaster')}>
+              🚨 Disaster
+            </button>
+            <button className={`tab-btn-3d ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
+              📊 Analytics
+            </button>
           </div>
 
-          {/* Chat Tab */}
+          {/* ===== CHAT TAB ===== */}
           {activeTab === 'chat' && (
-            <div className="tab-content-3d">
+            <div className="tab-content-3d chat-tab-content">
               <div className="chat-header-3d">
                 <div className="chat-title-3d">
                   <Radio size={16} color="#4ecdc4" />
                   <span>Weather Assistant</span>
+                  <span className="chat-count">{chatHistory.length} messages</span>
                 </div>
-                <div className="chat-badge-3d">AI-Powered</div>
+                <div className="chat-actions">
+                  <WeatherPoints weather={weather} />
+                  {chatHistory.length > 0 && (
+                    <button className="clear-chat-btn" onClick={clearChatHistory} title="Clear chat">
+                      🗑️
+                    </button>
+                  )}
+                  <div className="chat-badge-3d">AI-Powered</div>
+                </div>
               </div>
 
               <div className="roles-3d">
@@ -559,45 +672,63 @@ function App(){
                 ))}
               </div>
 
-              <div className="chatbox-3d">
-                <div className="chat-avatar-3d"><CloudSun size={20} color="#4ecdc4" /></div>
-                <div>
-                  <b>WeatherGPT</b>
-                  <p>Ask me about weather, risk, farming, travel, events or emergency planning.</p>
-                </div>
-              </div>
-
-              <AnimatePresence>
-                {answer && (
-                  <motion.div 
-                    className={`answer-3d ${riskClass}`}
-                    initial={{ scale: 0.95, opacity: 0, y: 20 }}
-                    animate={{ scale: 1, opacity: 1, y: 0 }}
-                    exit={{ scale: 0.95, opacity: 0 }}
-                    transition={{ duration: 0.3 }}
-                  >
-                    <div className="answer-header-3d">
-                      <span className={`risk-badge-3d ${riskClass}`}>⚠️ {answer.risk}</span>
-                      <span className="confidence-3d">{answer.confidence}</span>
+              <div className="chat-history-container">
+                <AnimatePresence>
+                  {chatHistory.length === 0 ? (
+                    <motion.div 
+                      className="chatbox-3d"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                    >
+                      <div className="chat-avatar-3d"><CloudSun size={20} color="#4ecdc4" /></div>
+                      <div>
+                        <b>WeatherGPT</b>
+                        <p>Ask me about weather, risk, farming, travel, events or emergency planning.</p>
+                      </div>
+                    </motion.div>
+                  ) : (
+                    <div className="chat-messages">
+                      {chatHistory.map((msg) => (
+                        <motion.div 
+                          key={msg.id}
+                          className={`chat-message ${msg.riskClass}`}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3 }}
+                        >
+                          <div className="message-question">
+                            <span className="message-icon">🧑</span>
+                            <span className="message-text">{msg.question}</span>
+                          </div>
+                          <div className={`message-answer ${msg.riskClass}`}>
+                            <div className="answer-header-mini">
+                              <span className={`risk-badge-mini ${msg.riskClass}`}>⚠️ {msg.risk}</span>
+                              <span className="message-time">{msg.timestamp}</span>
+                            </div>
+                            <p>{msg.answer}</p>
+                            {msg.actions && msg.actions.length > 0 && (
+                              <div className="actions-mini">
+                                <strong>Actions:</strong>
+                                {msg.actions.slice(0, 2).map((a, i) => (
+                                  <span key={i}>✅ {a}</span>
+                                ))}
+                              </div>
+                            )}
+                            <button 
+                              className="speak-mini-btn" 
+                              onClick={() => speakText(msg.answer)}
+                              disabled={isSpeaking}
+                            >
+                              <Languages size={12} /> 🔊
+                            </button>
+                          </div>
+                        </motion.div>
+                      ))}
                     </div>
-                    <div className="answer-text-3d"><p>{answer.answer}</p></div>
-                    {answer.actions && answer.actions.length > 0 && (
-                      <div className="actions-3d">
-                        <strong>Recommended Actions</strong>
-                        {answer.actions.map((a,i) => <div key={i} className="action-item-3d">✅ {a}</div>)}
-                      </div>
-                    )}
-                    {answer.evidence && (
-                      <div className="evidence-3d">
-                        {answer.evidence.map((e,i) => <span key={i} className="evidence-tag-3d">{e}</span>)}
-                      </div>
-                    )}
-                    <button className="speak-btn-3d" onClick={speak} disabled={isSpeaking}>
-                      <Languages size={14} /> {isSpeaking ? 'Speaking...' : 'Speak Advisory'}
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                  )}
+                </AnimatePresence>
+              </div>
 
               <div className="composer-3d">
                 <div className="composer-input-3d">
@@ -633,7 +764,7 @@ function App(){
             </div>
           )}
 
-          {/* Map Tab */}
+          {/* ===== MAP TAB ===== */}
           {activeTab === 'map' && (
             <div className="tab-content-3d map-tab">
               <InteractiveMap 
@@ -647,14 +778,16 @@ function App(){
             </div>
           )}
 
-          {/* Charts Tab */}
+          {/* ===== CHARTS TAB ===== */}
           {activeTab === 'charts' && (
             <div className="tab-content-3d charts-tab">
               <WeatherCharts weatherData={weather} />
+              <WeatherTimeline weatherData={weather} />
+              <WeatherAnalyticsComponent weatherData={weather} />
             </div>
           )}
 
-          {/* Disease Tab */}
+          {/* ===== DISEASE TAB ===== */}
           {activeTab === 'disease' && (
             <div className="tab-content-3d disease-tab">
               <h4 style={{fontSize: '16px', color: '#ffffff', marginBottom: '12px'}}>
@@ -686,7 +819,6 @@ function App(){
                 <p style={{color: '#556688', fontSize: '13px'}}>Loading disease data...</p>
               )}
               
-              {/* Crop Yield */}
               <h4 style={{fontSize: '16px', color: '#ffffff', marginTop: '18px', marginBottom: '10px'}}>
                 <Calendar size={16} style={{marginRight: '8px'}} /> Crop Yield Prediction
               </h4>
@@ -725,6 +857,117 @@ function App(){
                   </p>
                 )}
               </div>
+              
+              <div className="crop-recommend-section">
+                <CropRecommendation 
+                  lat={location.latitude} 
+                  lon={location.longitude} 
+                  soilType="loam" 
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ===== FLOOD RISK TAB ===== */}
+          {activeTab === 'flood' && (
+            <div className="tab-content-3d flood-tab">
+              <h4 style={{fontSize: '16px', color: '#ffffff', marginBottom: '12px'}}>
+                🌊 Flood Risk Analysis
+              </h4>
+              <FloodRiskMap 
+                lat={location.latitude} 
+                lon={location.longitude} 
+                locationName={location.name}
+              />
+            </div>
+          )}
+
+          {/* ===== LIGHTNING TRACKER TAB ===== */}
+          {activeTab === 'lightning' && (
+            <div className="tab-content-3d lightning-tab">
+              <h4 style={{fontSize: '16px', color: '#ffffff', marginBottom: '12px'}}>
+                ⚡ Lightning Tracker
+              </h4>
+              <LightningTracker 
+                lat={location.latitude} 
+                lon={location.longitude} 
+              />
+            </div>
+          )}
+
+          {/* ===== WEATHER COMPARISON TAB ===== */}
+          {activeTab === 'compare' && (
+            <div className="tab-content-3d compare-tab">
+              <h4 style={{fontSize: '16px', color: '#ffffff', marginBottom: '12px'}}>
+                📊 Weather Comparison
+              </h4>
+              <WeatherComparison />
+            </div>
+          )}
+
+          {/* ===== RELIABILITY SCORE TAB ===== */}
+          {activeTab === 'reliability' && (
+            <div className="tab-content-3d reliability-tab">
+              <h4 style={{fontSize: '16px', color: '#ffffff', marginBottom: '12px'}}>
+                🎯 Weather Reliability Score
+              </h4>
+              <ReliabilityScore 
+                lat={location.latitude} 
+                lon={location.longitude} 
+              />
+            </div>
+          )}
+
+          {/* ===== IMD DATA TAB (NEW) ===== */}
+          {activeTab === 'imd' && (
+            <div className="tab-content-3d imd-tab">
+              <h4 style={{fontSize: '16px', color: '#ffffff', marginBottom: '12px'}}>
+                📡 IMD Weather Data
+              </h4>
+              <IMDData 
+                lat={location.latitude} 
+                lon={location.longitude} 
+                locationName={location.name}
+              />
+            </div>
+          )}
+
+          {/* ===== EMERGENCY BROADCAST TAB (NEW) ===== */}
+          {activeTab === 'emergency' && (
+            <div className="tab-content-3d emergency-tab">
+              <h4 style={{fontSize: '16px', color: '#ffffff', marginBottom: '12px'}}>
+                🆘 Emergency Broadcast
+              </h4>
+              <EmergencyBroadcast 
+                lat={location.latitude} 
+                lon={location.longitude} 
+              />
+            </div>
+          )}
+
+          {/* ===== DISASTER RESPONSE TAB (NEW) ===== */}
+          {activeTab === 'disaster' && (
+            <div className="tab-content-3d disaster-tab">
+              <h4 style={{fontSize: '16px', color: '#ffffff', marginBottom: '12px'}}>
+                🚨 Disaster Response
+              </h4>
+              <DisasterResponse 
+                lat={location.latitude} 
+                lon={location.longitude} 
+              />
+            </div>
+          )}
+
+          {/* ===== HISTORICAL ANALYTICS TAB (NEW) ===== */}
+          {activeTab === 'analytics' && (
+            <div className="tab-content-3d analytics-tab">
+              <h4 style={{fontSize: '16px', color: '#ffffff', marginBottom: '12px'}}>
+                📊 Historical Weather Analytics
+              </h4>
+              <WeatherAnalytics 
+                lat={location.latitude} 
+                lon={location.longitude} 
+              />
             </div>
           )}
         </motion.section>
@@ -743,6 +986,34 @@ function App(){
             <button className="close-heatmap" onClick={() => setShowHeatmap(false)}>✕</button>
           </div>
           <RiskHeatmap lat={location.latitude} lon={location.longitude} weather={weather} />
+        </motion.div>
+      )}
+
+      {/* Disaster Alert Modal */}
+      {showDisasterAlert && disasterRisk && (
+        <motion.div 
+          className="disaster-alert-modal"
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.9, opacity: 0 }}
+        >
+          <div className="disaster-alert-content">
+            <AlertTriangle size={32} color="#ff6b6b" />
+            <h3>🚨 {disasterRisk.highest_risk.type.toUpperCase()} RISK DETECTED</h3>
+            <p className="risk-level">{disasterRisk.highest_risk.risk_level}</p>
+            <p className="risk-description">
+              Risk Score: {disasterRisk.highest_risk.risk_score}%
+            </p>
+            <div className="disaster-recommendations">
+              <strong>Recommended Actions:</strong>
+              <ul>
+                {disasterRisk.recommendations.map((rec, i) => (
+                  <li key={i}>{rec}</li>
+                ))}
+              </ul>
+            </div>
+            <button onClick={() => setShowDisasterAlert(false)}>Acknowledge</button>
+          </div>
         </motion.div>
       )}
 
@@ -774,7 +1045,7 @@ function App(){
       )}
 
       <footer className="footer-3d">
-        WeatherGPT v3.0 • Tekathon 5.0 • PS 26068 • Not a replacement for official IMD warnings
+        WeatherGPT v3.0 • Not a replacement for official IMD warnings
       </footer>
     </div>
   );
